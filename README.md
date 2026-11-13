@@ -1,16 +1,16 @@
 # 微记 MiniFeed
 
-一个轻量的本地短动态记录工具，使用 **Vue 3 + Pinia + TypeScript + Vite** 实现，内容保存在浏览器 Local Storage，不上传任何服务器。
+一个轻量的短动态记录工具：前端 **Vue 3 + Pinia + TypeScript + Vite**，后端 **Hono + REST API + 进程内内存存储**。内容不再写入浏览器 Local Storage，而是通过 HTTP 接口保存到本地后端服务。
 
 项目以 **TDD（测试先行）** 方式开发：每个模块先写失败用例，再实现至通过。
 
 ## 功能
 
-- **发布**：多行文本输入，280 字上限，实时字数统计（≥240 字转警示色），全空白内容不可提交，支持 `Ctrl / ⌘ + Enter` 快捷发布
+- **发布**：多行文本输入，280 字上限，实时字数统计（≥240 字转警示色），全空白内容不可提交，支持 `Ctrl / ⌘ + Enter` 快捷发布，发布中按钮禁用防重复提交
 - **时间线**：按创建时间倒序展示，最新在最前；每条含渐变首字头像、昵称、相对时间（刚刚 / n 分钟前 / n 小时前 / n 天前 / 日期）与正文
-- **本地持久化**：写入 `localStorage` 键 `minifeed.posts`，刷新或重新打开页面内容与顺序不变，最多保留最新 500 条
+- **服务端持久化**：内容保存在后端进程内存，刷新或重新打开页面内容与顺序不变，最多保留最新 500 条
 - **安全渲染**：正文通过 Vue 插值渲染（不使用 `v-html`），HTML 标签与脚本以纯文本显示，换行保留
-- **容错**：读取时对损坏 JSON、非数组、脏条目做过滤，不白屏；写入失败（隐私模式/配额超限）会提示且不会产生“假发布”
+- **容错**：后端未启动时页面不白屏，提示「加载失败，请确认后端服务已启动。」；发布失败保留草稿并提示后端返回的错误信息
 - **空状态 / 响应式 / 动效降级**：无内容时展示插画与引导文案；桌面 640px 居中单列，移动端自适应；遵循 `prefers-reduced-motion`
 
 ## 技术栈
@@ -21,39 +21,72 @@
 | 构建 | Vite 8 |
 | 框架 | Vue 3（Composition API + `<script setup lang="ts">`） |
 | 状态管理 | Pinia |
-| 测试 | Vitest + @vue/test-utils + jsdom |
+| 后端 | Hono 4 + @hono/node-server（tsx 直接运行 TS） |
+| 数据存储 | 后端进程内存（Map 语义的数组 + 容量上限） |
+| 测试 | Vitest + @vue/test-utils + jsdom（前端）/ node（后端） |
 | 类型检查 | vue-tsc |
-| 存储 | localStorage |
 
 ## 快速开始
 
 ```bash
 npm install
-npm run dev        # 开发服务器
-npm run build      # 类型检查 + 生产构建
-npm run preview    # 预览生产构建
-npm run test       # 监听模式运行测试
-npm run test:run   # 单次运行全部测试
-npm run typecheck  # 仅类型检查
+npm run dev:server  # 终端 1：启动 API 服务（http://localhost:3001）
+npm run dev         # 终端 2：启动前端（http://localhost:5173，/api 由 Vite 代理）
 ```
 
-> 首次安装如遇网络缓慢，可追加 `--registry=https://registry.npmmirror.com`。
+其它脚本：
+
+```bash
+npm run build        # 类型检查 + 生产构建
+npm run preview      # 预览生产构建（同样带 /api 代理）
+npm run test         # 监听模式运行测试
+npm run test:run     # 单次运行全部测试
+npm run typecheck    # 仅类型检查
+npm run start:server # 非监听方式启动 API 服务
+```
+
+> 前端通过 `VITE_API_BASE_URL` 覆盖 API 基址，默认 `/api`（走 Vite 代理，无需 CORS）。
+
+## API
+
+REST 风格，统一 JSON，错误体为 `{ "error": { "code", "message" } }`。
+
+| 方法 | 路径 | 说明 | 成功响应 |
+| --- | --- | --- | --- |
+| GET | `/api/health` | 健康检查 | `200 { "status": "ok" }` |
+| GET | `/api/posts` | 记录列表，`createdAt` 倒序 | `200 { "posts": Post[] }` |
+| POST | `/api/posts` | 创建记录，body `{ "text": string }` | `201 { "post": Post }` |
+
+错误码：
+
+| HTTP | code | 触发条件 |
+| --- | --- | --- |
+| 400 | `empty` | 内容为空白 |
+| 400 | `too-long` | 超过 280 字符 |
+| 400 | `invalid-body` | 请求体非法 JSON / 缺少 `text` / `text` 非字符串 |
+| 404 | `not-found` | 未匹配的 `/api/*` 路由 |
+
+`Post` 结构：`{ id: string; text: string; createdAt: number }`，`id` 由后端生成，`createdAt` 为毫秒时间戳。
 
 ## 目录结构
 
 ```
 .
 ├── index.html                    # Vite 入口
+├── server/
+│   ├── store.ts                  # 内存存储：createPostStore（倒序、500 条上限、可注入时钟与 id）
+│   ├── app.ts                    # createApp(store)：REST 路由与 JSON 错误处理
+│   └── index.ts                  # 入口：监听 3001 端口
 ├── src/
 │   ├── main.ts                   # 创建应用、注册 Pinia
 │   ├── App.vue                   # 页面编排：Header / Composer / Timeline / Footer
 │   ├── types.ts                  # Post、PublishResult、StatusMessage 类型
 │   ├── lib/
-│   │   ├── constants.ts          # 存储键、字数上限、容量上限
-│   │   ├── storage.ts            # localStorage 安全读写、校验、排序、截断
+│   │   ├── api.ts                # HTTP 客户端（fetch 封装、ApiError、响应校验）
+│   │   ├── constants.ts          # 字数上限、容量上限
 │   │   └── time.ts               # 相对时间与日期格式化
 │   ├── stores/
-│   │   └── posts.ts              # Pinia store：hydrate / publish（先落盘再更新内存）
+│   │   └── posts.ts              # Pinia store：hydrate / publish（异步、并发保护）
 │   ├── components/
 │   │   ├── AppHeader.vue
 │   │   ├── PostComposer.vue
@@ -62,8 +95,10 @@ npm run typecheck  # 仅类型检查
 │   │   └── EmptyState.vue
 │   └── styles/main.css           # 设计令牌、布局、背景与全局样式
 └── tests/
-    ├── setup.ts                  # 每个用例清理 localStorage
-    ├── unit/                     # storage / time / posts store
+    ├── setup.ts                  # 每个用例重置模拟后端
+    ├── helpers/fake-api.ts       # 内存版后端，stub 全局 fetch
+    ├── server/api.spec.ts        # Hono 路由（app.request，node 环境）
+    ├── unit/                     # time / posts store
     └── component/                # PostComposer / TimelineSection / App
 ```
 
@@ -71,27 +106,29 @@ npm run typecheck  # 仅类型检查
 
 开发按「红 → 绿 → 重构」推进，测试先于实现提交：
 
-1. **逻辑层**：`storage`（空值、损坏 JSON、非数组、脏条目过滤、倒序、500 条截断、读写异常）与 `time`（各时间边界、跨年格式）
-2. **状态层**：`posts` store（trim 校验、空值与超长拒绝、落盘、倒序、容量上限、落盘失败不更新内存）
-3. **视图层**：Composer（字数、禁用态、快捷发布、reset 回焦）、Timeline（空状态、倒序、纯文本渲染）、App（发布 → 列表 → 存储 → 重新挂载恢复）
+1. **后端**：`store`（倒序、时间戳并列时的稳定顺序、500 条上限丢弃最旧、可注入时钟与 id）与 `app`（health、列表、创建、trim、空/超长/非法 body 校验、404）
+2. **HTTP 层**：`api`（基址解析、非 2xx 错误体解析、网络异常、响应结构校验）
+3. **状态层**：`posts` store（本地校验不发请求、成功后插入最前、服务端错误与网络错误映射、hydrate 排序与安全回退、500 条截断、`isPublishing` 期间重复提交只发一次请求）
+4. **视图层**：Composer（字数、禁用态、快捷发布、busy 禁用、reset 回焦）、Timeline（空状态、倒序、纯文本渲染）、App（挂载即请求、发布 → 列表 → 请求体断言、重新挂载从后端恢复、后端不可用提示、不再写 Local Storage 的回归断言）
 
-当前用例：6 个测试文件、46 个用例，全部通过。
+当前用例：6 个测试文件、57 个用例，全部通过。
 
 ## 数据存储
 
-- 键名：`minifeed.posts`
-- 结构：`{ id: string, text: string, createdAt: number }[]`，按 `createdAt` 倒序
-- 上限：最多 500 条，超出丢弃最旧
-- 清除：开发者工具执行 `localStorage.removeItem('minifeed.posts')`，或清除站点数据
-- 注意：数据仅存在于当前浏览器，换设备或清除站点数据后不可恢复
+- 位置：后端进程内存（`server/store.ts` 中的数组），进程退出即丢失
+- 结构：`{ id: string, text: string, createdAt: number }[]`，接口返回按 `createdAt` 倒序
+- 上限：最多 500 条，超出丢弃最早写入的一条
+- 清除：重启后端服务（`Ctrl + C` 后重新 `npm run dev:server`）
+- 注意：不是数据库，不支持多实例共享；如需持久化需替换 `server/store.ts` 的实现
 
 ## 验收记录
 
-- `npm run test:run`：6 个文件 / 46 个用例全部通过
+- `npm run test:run`：6 个文件 / 57 个用例全部通过
 - `npm run typecheck`：无类型错误
 - `npm run build`：构建成功
-- 浏览器端（Edge，`vite preview`）：发布、刷新后持久化、HTML 纯文本渲染、移动端无横向滚动、控制台无报错
+- 接口冒烟：`GET /api/health` 返回 ok；`POST /api/posts` 201；空内容返回 `400 empty`
+- 浏览器端（Chromium + `vite` 开发服务器，`/api` 代理到 3001）：发布成功、刷新后数据仍在、`localStorage` 保持为空、后端不可用时展示错误提示
 
 ## 版本
 
-v2.0.0
+v3.0.0

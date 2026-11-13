@@ -5,6 +5,7 @@ import type { StatusMessage } from '@/types'
 
 const props = defineProps<{
   status?: StatusMessage | null
+  busy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -15,7 +16,7 @@ const draft = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
 
 const trimmedLength = computed(() => draft.value.trim().length)
-const isDisabled = computed(() => trimmedLength.value === 0)
+const isDisabled = computed(() => trimmedLength.value === 0 || props.busy === true)
 const counterText = computed(() => `${draft.value.length}/${MAX_LENGTH}`)
 
 const counterState = computed(() => {

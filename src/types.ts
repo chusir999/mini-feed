@@ -4,7 +4,7 @@ export interface Post {
   createdAt: number
 }
 
-export type PublishFailureReason = 'empty' | 'too-long' | 'storage'
+export type PublishFailureReason = 'empty' | 'too-long' | 'server'
 
 export type PublishResult =
   | { ok: true; post: Post }

@@ -9,9 +9,9 @@
         <p class="brand-sub">MiniFeed · 记录此刻</p>
       </div>
     </div>
-    <span class="badge" title="所有内容都保存在当前浏览器，不会上传服务器">
+    <span class="badge" title="所有内容保存在本地后端服务的进程内存中，服务重启后会清空">
       <span class="badge-dot" aria-hidden="true"></span>
-      本地存储
+      服务端存储
     </span>
   </header>
 </template>

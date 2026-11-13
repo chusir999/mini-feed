@@ -24,8 +24,8 @@ function setStatus(type: StatusMessage['type'], message: string): void {
   }, 2600)
 }
 
-function handleSubmit(text: string): void {
-  const result = store.publish(text)
+async function handleSubmit(text: string): Promise<void> {
+  const result = await store.publish(text)
 
   if (result.ok) {
     setStatus('success', '发布成功。')
@@ -43,11 +43,15 @@ function handleSubmit(text: string): void {
     return
   }
 
-  setStatus('error', store.lastError ?? '保存失败。')
+  setStatus('error', store.lastError ?? '发布失败，请稍后再试。')
 }
 
-onMounted(() => {
-  store.hydrate()
+onMounted(async () => {
+  await store.hydrate()
+
+  if (store.lastError) {
+    setStatus('error', '加载失败，请确认后端服务已启动。')
+  }
 })
 
 onBeforeUnmount(() => {
@@ -65,13 +69,18 @@ onBeforeUnmount(() => {
     <AppHeader />
 
     <main>
-      <PostComposer ref="composer" :status="status" @submit="handleSubmit" />
+      <PostComposer
+        ref="composer"
+        :status="status"
+        :busy="store.isPublishing"
+        @submit="handleSubmit"
+      />
       <TimelineSection :posts="posts" />
     </main>
 
     <footer class="footer">
-      <p>数据仅存储于本地浏览器，清除浏览器数据将丢失内容。</p>
-      <p class="version">微记 MiniFeed · v2.0.0</p>
+      <p>内容保存在本地服务的进程内存中，服务重启后会清空。</p>
+      <p class="version">微记 MiniFeed · v3.0.0</p>
     </footer>
   </div>
 </template>
