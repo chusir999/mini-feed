@@ -81,4 +81,11 @@ describe('PostComposer', () => {
     expect(wrapper.find('.status').text()).toBe('内容不能为空。')
     expect(wrapper.find('.status').classes()).toContain('is-error')
   })
+
+  it('busy 时发布按钮禁用', async () => {
+    const wrapper = mount(PostComposer, { props: { busy: true } })
+    await wrapper.find('textarea').setValue('请求进行中')
+
+    expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined()
+  })
 })

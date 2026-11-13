@@ -1,137 +1,175 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_LENGTH, MAX_POSTS, STORAGE_KEY } from '@/lib/constants'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { MAX_LENGTH, MAX_POSTS } from '@/lib/constants'
 import { usePostsStore } from '@/stores/posts'
 import type { Post } from '@/types'
+import { installFakeApi } from '../helpers/fake-api'
+import type { FakeApi } from '../helpers/fake-api'
 
-function seedPosts(posts: Post[]): void {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(posts))
-}
+let fake: FakeApi
 
 function buildPost(id: string, createdAt: number, text = `记录 ${id}`): Post {
   return { id, text, createdAt }
 }
 
+function postRequests() {
+  return fake.requests().filter((request) => request.method === 'POST')
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
-  window.localStorage.clear()
+  fake = installFakeApi()
 })
 
 describe('usePostsStore 初始状态', () => {
   it('未加载数据时为空列表', () => {
     const store = usePostsStore()
+
     expect(store.posts).toEqual([])
     expect(store.count).toBe(0)
     expect(store.lastError).toBeNull()
+    expect(store.isLoading).toBe(false)
+    expect(store.isPublishing).toBe(false)
   })
 })
 
 describe('publish', () => {
-  it('发布纯文本并去除首尾空白', () => {
+  it('发布纯文本：去除首尾空白、请求后端并插入列表', async () => {
     const store = usePostsStore()
-    const result = store.publish('  今天的第一条记录  ')
+    const result = await store.publish('  今天的第一条记录  ')
 
-    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('预期发布成功')
+
+    expect(result.post.text).toBe('今天的第一条记录')
+    expect(result.post.id).not.toBe('')
+    expect(typeof result.post.createdAt).toBe('number')
+
     expect(store.posts).toHaveLength(1)
     expect(store.posts[0]?.text).toBe('今天的第一条记录')
-    expect(typeof store.posts[0]?.id).toBe('string')
-    expect(typeof store.posts[0]?.createdAt).toBe('number')
+    expect(store.lastError).toBeNull()
+
+    const requests = postRequests()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe('/api/posts')
+    expect(requests[0]?.body).toEqual({ text: '今天的第一条记录' })
+    expect(fake.list()).toHaveLength(1)
   })
 
-  it('拒绝空内容与全空白内容', () => {
+  it('本地拦截空内容与超长内容且不发请求', async () => {
     const store = usePostsStore()
 
-    expect(store.publish('')).toEqual({ ok: false, reason: 'empty' })
-    expect(store.publish('    \n  ')).toEqual({ ok: false, reason: 'empty' })
+    await expect(store.publish('')).resolves.toEqual({ ok: false, reason: 'empty' })
+    await expect(store.publish('    \n  ')).resolves.toEqual({ ok: false, reason: 'empty' })
+    await expect(store.publish('字'.repeat(MAX_LENGTH + 1))).resolves.toEqual({
+      ok: false,
+      reason: 'too-long',
+    })
+
+    expect(fake.requests()).toHaveLength(0)
     expect(store.posts).toHaveLength(0)
   })
 
-  it('拒绝超过字数上限的内容', () => {
+  it('服务端 400 empty 映射为失败且 lastError 为可读中文', async () => {
     const store = usePostsStore()
+    fake.failNext(400, 'empty', '内容不能为空')
 
-    expect(store.publish('字'.repeat(MAX_LENGTH + 1))).toEqual({ ok: false, reason: 'too-long' })
-    expect(store.publish('字'.repeat(MAX_LENGTH)).ok).toBe(true)
+    const result = await store.publish('服务端认为不合法的内容')
+
+    expect(result).toEqual({ ok: false, reason: 'server' })
+    expect(store.posts).toHaveLength(0)
+    expect(store.lastError).toBeTruthy()
+    expect(store.lastError).toContain('内容不能为空')
   })
 
-  it('发布后立即写入 localStorage', () => {
+  it('网络异常返回 server 失败并记录提示', async () => {
     const store = usePostsStore()
-    store.publish('持久化内容')
+    fake.setMode('network-error')
 
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    expect(raw).not.toBeNull()
-    const saved = JSON.parse(raw as string) as Post[]
-    expect(saved).toHaveLength(1)
-    expect(saved[0]?.text).toBe('持久化内容')
+    const result = await store.publish('离线时写下的内容')
+
+    expect(result).toEqual({ ok: false, reason: 'server' })
+    expect(store.posts).toHaveLength(0)
+    expect(store.lastError).toContain('网络')
   })
 
-  it('新内容排在最前（倒序）', () => {
-    vi.useFakeTimers()
-    try {
-      const store = usePostsStore()
-      vi.setSystemTime(new Date('2026-11-13T10:00:00+08:00'))
-      store.publish('较早的内容')
-      vi.setSystemTime(new Date('2026-11-13T10:05:00+08:00'))
-      store.publish('较新的内容')
+  it('新内容排在最前（倒序）', async () => {
+    const store = usePostsStore()
 
-      expect(store.posts.map((post) => post.text)).toEqual(['较新的内容', '较早的内容'])
-    } finally {
-      vi.useRealTimers()
-    }
+    await store.publish('较早的内容')
+    await store.publish('较新的内容')
+
+    expect(store.posts.map((post) => post.text)).toEqual(['较新的内容', '较早的内容'])
   })
 
-  it('达到容量上限后丢弃最旧的一条', () => {
-    const existing = Array.from({ length: MAX_POSTS }, (_, index) =>
-      buildPost(`post-${index}`, 1_000 + index),
-    ).reverse()
-    seedPosts(existing)
+  it('达到容量上限后丢弃最旧的一条', async () => {
+    fake.seed(
+      Array.from({ length: MAX_POSTS }, (_, index) => buildPost(`post-${index}`, 1_000 + index)),
+    )
 
     const store = usePostsStore()
-    store.hydrate()
+    await store.hydrate()
     expect(store.posts).toHaveLength(MAX_POSTS)
 
-    store.publish('超出上限的最新内容')
+    await store.publish('超出上限的最新内容')
 
     expect(store.posts).toHaveLength(MAX_POSTS)
     expect(store.posts[0]?.text).toBe('超出上限的最新内容')
     expect(store.posts.some((post) => post.id === 'post-0')).toBe(false)
   })
 
-  it('落盘失败时不更新内存并记录错误', () => {
+  it('isPublishing 期间重复提交只发出一次请求', async () => {
     const store = usePostsStore()
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError')
-    })
+    fake.hold()
 
-    const result = store.publish('无法保存的内容')
+    const first = store.publish('正在进行的内容')
+    expect(store.isPublishing).toBe(true)
 
-    expect(result).toEqual({ ok: false, reason: 'storage' })
-    expect(store.posts).toHaveLength(0)
-    expect(store.lastError).toBeTruthy()
-    consoleSpy.mockRestore()
+    await expect(store.publish('重复提交的内容')).resolves.toEqual({ ok: false, reason: 'server' })
+    expect(postRequests()).toHaveLength(1)
+
+    fake.release()
+    const firstResult = await first
+
+    expect(firstResult.ok).toBe(true)
+    expect(store.isPublishing).toBe(false)
+    expect(postRequests()).toHaveLength(1)
+    expect(store.posts).toHaveLength(1)
   })
 })
 
 describe('hydrate', () => {
-  it('从 localStorage 恢复并按时间倒序', () => {
-    seedPosts([
-      buildPost('old', 100),
-      buildPost('new', 300),
-      buildPost('middle', 200),
-    ])
+  it('从后端恢复并按时间倒序', async () => {
+    fake.seed([buildPost('old', 100), buildPost('new', 300), buildPost('middle', 200)])
 
     const store = usePostsStore()
-    store.hydrate()
+    await store.hydrate()
 
     expect(store.posts.map((post) => post.id)).toEqual(['new', 'middle', 'old'])
     expect(store.count).toBe(3)
+    expect(store.isLoading).toBe(false)
+    expect(store.lastError).toBeNull()
   })
 
-  it('数据损坏时安全回退为空列表', () => {
-    window.localStorage.setItem(STORAGE_KEY, '{ broken json')
-    const store = usePostsStore()
+  it('请求失败时安全回退为空列表并记录提示', async () => {
+    fake.seed([buildPost('old', 100)])
+    fake.setMode('server-error')
 
-    store.hydrate()
+    const store = usePostsStore()
+    await store.hydrate()
+
+    expect(store.posts).toEqual([])
+    expect(store.count).toBe(0)
+    expect(store.isLoading).toBe(false)
+    expect(store.lastError).toContain('加载失败')
+  })
+
+  it('响应结构异常时不会静默返回空数组', async () => {
+    fake.setMode('malformed')
+
+    const store = usePostsStore()
+    await store.hydrate()
+
+    expect(store.lastError).toBeTruthy()
     expect(store.posts).toEqual([])
   })
 })
