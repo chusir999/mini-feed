@@ -12,3 +12,8 @@ desktop.ini
 *.log
 *.tmp
 node_modules/
+
+# 本地 AI 工具缓存
+.codebuddy/
+.agents/
+skills-lock.json
