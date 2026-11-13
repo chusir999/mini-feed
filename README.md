@@ -1,60 +1,97 @@
 # 微记 MiniFeed
 
-一个用 **纯 HTML + CSS + JavaScript** 编写的轻量短动态记录工具。无需安装依赖、无需构建、无需服务器，双击 `index.html` 即可使用。
+一个轻量的本地短动态记录工具，使用 **Vue 3 + Pinia + TypeScript + Vite** 实现，内容保存在浏览器 Local Storage，不上传任何服务器。
 
-所有内容保存在浏览器的 Local Storage 中，不上传任何服务器。
+项目以 **TDD（测试先行）** 方式开发：每个模块先写失败用例，再实现至通过。
 
 ## 功能
 
-- **发布**：多行文本输入，实时字数统计（上限 280 字），空内容不可发布，支持 `Ctrl / ⌘ + Enter` 快捷发布
-- **查看**：时间线倒序展示全部动态，自动显示相对时间（刚刚 / x 分钟前 / 具体日期）
-- **本地持久化**：数据写入 `localStorage`（键名 `minifeed.posts`），刷新或重新打开页面内容不丢失
-- **安全渲染**：正文通过 `textContent` 渲染，HTML 标签与脚本以纯文本显示，保留换行
-- **空状态**：无内容时展示引导插画与提示
-- **响应式**：桌面端居中单列，移动端自适应；支持 `prefers-reduced-motion` 动画降级
+- **发布**：多行文本输入，280 字上限，实时字数统计（≥240 字转警示色），全空白内容不可提交，支持 `Ctrl / ⌘ + Enter` 快捷发布
+- **时间线**：按创建时间倒序展示，最新在最前；每条含渐变首字头像、昵称、相对时间（刚刚 / n 分钟前 / n 小时前 / n 天前 / 日期）与正文
+- **本地持久化**：写入 `localStorage` 键 `minifeed.posts`，刷新或重新打开页面内容与顺序不变，最多保留最新 500 条
+- **安全渲染**：正文通过 Vue 插值渲染（不使用 `v-html`），HTML 标签与脚本以纯文本显示，换行保留
+- **容错**：读取时对损坏 JSON、非数组、脏条目做过滤，不白屏；写入失败（隐私模式/配额超限）会提示且不会产生“假发布”
+- **空状态 / 响应式 / 动效降级**：无内容时展示插画与引导文案；桌面 640px 居中单列，移动端自适应；遵循 `prefers-reduced-motion`
+
+## 技术栈
+
+| 领域 | 选型 |
+| --- | --- |
+| 运行时 | Node.js 22 LTS（≥ 20.19 均可） |
+| 构建 | Vite 8 |
+| 框架 | Vue 3（Composition API + `<script setup lang="ts">`） |
+| 状态管理 | Pinia |
+| 测试 | Vitest + @vue/test-utils + jsdom |
+| 类型检查 | vue-tsc |
+| 存储 | localStorage |
+
+## 快速开始
+
+```bash
+npm install
+npm run dev        # 开发服务器
+npm run build      # 类型检查 + 生产构建
+npm run preview    # 预览生产构建
+npm run test       # 监听模式运行测试
+npm run test:run   # 单次运行全部测试
+npm run typecheck  # 仅类型检查
+```
+
+> 首次安装如遇网络缓慢，可追加 `--registry=https://registry.npmmirror.com`。
 
 ## 目录结构
 
 ```
 .
-├── index.html        # 页面结构
-├── css/
-│   └── style.css     # 全部样式（设计令牌、布局、组件、响应式）
-├── js/
-│   └── app.js        # 应用逻辑（存储 / 业务 / 视图）
-└── README.md
+├── index.html                    # Vite 入口
+├── src/
+│   ├── main.ts                   # 创建应用、注册 Pinia
+│   ├── App.vue                   # 页面编排：Header / Composer / Timeline / Footer
+│   ├── types.ts                  # Post、PublishResult、StatusMessage 类型
+│   ├── lib/
+│   │   ├── constants.ts          # 存储键、字数上限、容量上限
+│   │   ├── storage.ts            # localStorage 安全读写、校验、排序、截断
+│   │   └── time.ts               # 相对时间与日期格式化
+│   ├── stores/
+│   │   └── posts.ts              # Pinia store：hydrate / publish（先落盘再更新内存）
+│   ├── components/
+│   │   ├── AppHeader.vue
+│   │   ├── PostComposer.vue
+│   │   ├── TimelineSection.vue
+│   │   ├── PostItem.vue
+│   │   └── EmptyState.vue
+│   └── styles/main.css           # 设计令牌、布局、背景与全局样式
+└── tests/
+    ├── setup.ts                  # 每个用例清理 localStorage
+    ├── unit/                     # storage / time / posts store
+    └── component/                # PostComposer / TimelineSection / App
 ```
 
-## 运行方式
+## TDD 说明
 
-方式一：直接双击 `index.html`，浏览器打开即可（推荐 Chrome / Edge / Safari 新版本）。
+开发按「红 → 绿 → 重构」推进，测试先于实现提交：
 
-方式二：如需通过本地服务访问，可在项目目录执行任意静态服务器，例如：
+1. **逻辑层**：`storage`（空值、损坏 JSON、非数组、脏条目过滤、倒序、500 条截断、读写异常）与 `time`（各时间边界、跨年格式）
+2. **状态层**：`posts` store（trim 校验、空值与超长拒绝、落盘、倒序、容量上限、落盘失败不更新内存）
+3. **视图层**：Composer（字数、禁用态、快捷发布、reset 回焦）、Timeline（空状态、倒序、纯文本渲染）、App（发布 → 列表 → 存储 → 重新挂载恢复）
 
-```bash
-python -m http.server 8080
-# 然后访问 http://localhost:8080
-```
+当前用例：6 个测试文件、46 个用例，全部通过。
 
-## 数据存储说明
+## 数据存储
 
-- 存储位置：当前浏览器的 Local Storage，键名 `minifeed.posts`
-- 数据结构：`{ id: string, text: string, createdAt: number }[]`
-- 数量上限：最多保留最新 500 条，超出部分自动截断
-- 清除方式：在浏览器开发者工具中执行 `localStorage.removeItem('minifeed.posts')`，或清除站点数据
-- 注意：数据仅存在于当前浏览器与当前域名/路径下，换浏览器、换设备或清除站点数据后不可恢复
+- 键名：`minifeed.posts`
+- 结构：`{ id: string, text: string, createdAt: number }[]`，按 `createdAt` 倒序
+- 上限：最多 500 条，超出丢弃最旧
+- 清除：开发者工具执行 `localStorage.removeItem('minifeed.posts')`，或清除站点数据
+- 注意：数据仅存在于当前浏览器，换设备或清除站点数据后不可恢复
 
-## 实现要点
+## 验收记录
 
-- 无框架、无第三方库、无外部 CDN，所有资源使用相对路径，可在 `file://` 协议下正常工作
-- 读取时对 `JSON.parse` 做异常捕获并校验字段类型，脏数据不会导致白屏
-- 写入失败（隐私模式、存储配额超限）会给出可见提示，不影响页面其余部分
-- 时间线使用 `DocumentFragment` 批量渲染，列表按 `createdAt` 倒序排序
-
-## 浏览器兼容
-
-Chrome / Edge / Firefox / Safari 现代版本，以及基于 Chromium 的国产浏览器。
+- `npm run test:run`：6 个文件 / 46 个用例全部通过
+- `npm run typecheck`：无类型错误
+- `npm run build`：构建成功
+- 浏览器端（Edge，`vite preview`）：发布、刷新后持久化、HTML 纯文本渲染、移动端无横向滚动、控制台无报错
 
 ## 版本
 
-v1.0.0
+v2.0.0
