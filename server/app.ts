@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { MAX_LENGTH } from '../src/lib/constants'
 import type { PostStore } from './store'
 
@@ -8,8 +9,30 @@ interface ErrorBody {
   error: { code: ErrorCode; message: string }
 }
 
+type BooleanFieldResult = { ok: true; value: boolean } | { ok: false; message: string }
+
 function errorBody(code: ErrorCode, message: string): ErrorBody {
   return { error: { code, message } }
+}
+
+async function readBooleanField(c: Context, field: string): Promise<BooleanFieldResult> {
+  let payload: unknown
+  try {
+    payload = await c.req.json()
+  } catch {
+    return { ok: false, message: '请求体不是合法的 JSON' }
+  }
+
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return { ok: false, message: `请求体必须是包含 ${field} 字段的 JSON 对象` }
+  }
+
+  const raw = (payload as Record<string, unknown>)[field]
+  if (typeof raw !== 'boolean') {
+    return { ok: false, message: `${field} 字段缺失或不是布尔值` }
+  }
+
+  return { ok: true, value: raw }
 }
 
 export function createApp(store: PostStore): Hono {
@@ -45,6 +68,34 @@ export function createApp(store: PostStore): Hono {
     }
 
     return c.json({ post: store.add(text) }, 201)
+  })
+
+  app.put('/api/posts/:id/like', async (c) => {
+    const parsed = await readBooleanField(c, 'liked')
+    if (!parsed.ok) {
+      return c.json(errorBody('invalid-body', parsed.message), 400)
+    }
+
+    const post = store.setLiked(c.req.param('id'), parsed.value)
+    if (!post) {
+      return c.json(errorBody('not-found', '动态不存在'), 404)
+    }
+
+    return c.json({ post }, 200)
+  })
+
+  app.put('/api/posts/:id/favorite', async (c) => {
+    const parsed = await readBooleanField(c, 'favorited')
+    if (!parsed.ok) {
+      return c.json(errorBody('invalid-body', parsed.message), 400)
+    }
+
+    const post = store.setFavorited(c.req.param('id'), parsed.value)
+    if (!post) {
+      return c.json(errorBody('not-found', '动态不存在'), 404)
+    }
+
+    return c.json({ post }, 200)
   })
 
   app.all('/api/*', (c) => c.json(errorBody('not-found', '接口不存在'), 404))
