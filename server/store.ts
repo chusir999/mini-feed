@@ -10,6 +10,8 @@ export interface PostStore {
   readonly size: number
   list(): Post[]
   add(text: string): Post
+  setLiked(id: string, liked: boolean): Post | null
+  setFavorited(id: string, favorited: boolean): Post | null
   clear(): void
 }
 
@@ -69,6 +71,32 @@ export function createPostStore(options: PostStoreOptions = {}): PostStore {
       posts.push(post)
       if (posts.length > MAX_POSTS) {
         posts.splice(0, posts.length - MAX_POSTS)
+      }
+      return toPost(post)
+    },
+
+    setLiked(id: string, liked: boolean): Post | null {
+      const post = posts.find((item) => item.id === id)
+      if (!post) {
+        return null
+      }
+      if (post.liked !== liked) {
+        post.liked = liked
+        post.likeCount = liked ? post.likeCount + 1 : Math.max(0, post.likeCount - 1)
+      }
+      return toPost(post)
+    },
+
+    setFavorited(id: string, favorited: boolean): Post | null {
+      const post = posts.find((item) => item.id === id)
+      if (!post) {
+        return null
+      }
+      if (post.favorited !== favorited) {
+        post.favorited = favorited
+        post.favoriteCount = favorited
+          ? post.favoriteCount + 1
+          : Math.max(0, post.favoriteCount - 1)
       }
       return toPost(post)
     },
