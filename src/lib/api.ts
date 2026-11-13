@@ -85,20 +85,49 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   }
 }
 
+/** 计数必须是非负有限数字，否则视为后端返回异常，避免界面出现 NaN */
+function parseCount(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new ApiError('invalid-response', `后端返回的${label}不是合法的非负数字。`)
+  }
+
+  return value
+}
+
 function parsePost(value: unknown): Post {
   if (!isRecord(value)) {
     throw new ApiError('invalid-response', '后端返回的记录格式不正确。')
   }
 
-  const { id, text, createdAt } = value
+  const { id, text, createdAt, likeCount, liked, favoriteCount, favorited } = value
   if (typeof id !== 'string' || id.length === 0) {
     throw new ApiError('invalid-response', '后端返回的记录缺少合法的 id。')
   }
   if (typeof text !== 'string' || typeof createdAt !== 'number' || !Number.isFinite(createdAt)) {
     throw new ApiError('invalid-response', '后端返回的记录缺少合法的正文或时间。')
   }
+  if (typeof liked !== 'boolean' || typeof favorited !== 'boolean') {
+    throw new ApiError('invalid-response', '后端返回的记录缺少合法的点赞或收藏状态。')
+  }
 
-  return { id, text, createdAt }
+  return {
+    id,
+    text,
+    createdAt,
+    likeCount: parseCount(likeCount, '点赞数'),
+    liked,
+    favoriteCount: parseCount(favoriteCount, '收藏数'),
+    favorited,
+  }
+}
+
+/** PUT 类接口统一返回 { post }，解析失败按响应异常处理 */
+function readPostPayload(payload: unknown): Post {
+  if (!isRecord(payload)) {
+    throw new ApiError('invalid-response', '后端返回的操作结果格式不正确。')
+  }
+
+  return parsePost(payload.post)
 }
 
 /** 拉取全部记录；响应结构异常时抛错，避免静默变成空列表 */
@@ -125,4 +154,24 @@ export async function createPost(text: string): Promise<Post> {
   }
 
   return parsePost(payload.post)
+}
+
+/** 幂等设置某条记录的点赞状态，成功返回后端的最新记录 */
+export async function setPostLiked(id: string, liked: boolean): Promise<Post> {
+  const payload = await requestJson(`/posts/${encodeURIComponent(id)}/like`, {
+    method: 'PUT',
+    body: JSON.stringify({ liked }),
+  })
+
+  return readPostPayload(payload)
+}
+
+/** 幂等设置某条记录的收藏状态，成功返回后端的最新记录 */
+export async function setPostFavorited(id: string, favorited: boolean): Promise<Post> {
+  const payload = await requestJson(`/posts/${encodeURIComponent(id)}/favorite`, {
+    method: 'PUT',
+    body: JSON.stringify({ favorited }),
+  })
+
+  return readPostPayload(payload)
 }

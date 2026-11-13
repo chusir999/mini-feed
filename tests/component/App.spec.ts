@@ -130,3 +130,117 @@ describe('App 整体流程', () => {
     expect(fake.requests().filter((request) => request.method === 'POST')).toHaveLength(0)
   })
 })
+
+describe('App 点赞与收藏', () => {
+  async function seedOnePost(wrapper: ReturnType<typeof mountApp>, text = '可以互动的记录') {
+    await publish(wrapper, text)
+    const post = fake.list()[0]
+    if (!post) throw new Error('预期后端已存在一条记录')
+    return post
+  }
+
+  function putRequests() {
+    return fake.requests().filter((request) => request.method === 'PUT')
+  }
+
+  it('点击点赞发出 PUT 请求并更新计数与激活态', async () => {
+    const wrapper = mountApp()
+    await flushPromises()
+    const post = await seedOnePost(wrapper)
+
+    await wrapper.find('.action-like').trigger('click')
+    await flushPromises()
+
+    const like = wrapper.find('.action-like')
+    expect(like.text()).toContain('♥ 1')
+    expect(like.classes()).toContain('is-active')
+    expect(like.attributes('aria-pressed')).toBe('true')
+    expect(like.attributes('aria-label')).toBe('取消点赞')
+
+    const puts = putRequests()
+    expect(puts).toHaveLength(1)
+    expect(puts[0]?.url).toBe(`/api/posts/${post.id}/like`)
+    expect(puts[0]?.body).toEqual({ liked: true })
+    expect(fake.list()[0]?.liked).toBe(true)
+    expect(fake.list()[0]?.likeCount).toBe(1)
+  })
+
+  it('再次点击取消点赞并发出 liked:false', async () => {
+    const wrapper = mountApp()
+    await flushPromises()
+    const post = await seedOnePost(wrapper)
+
+    await wrapper.find('.action-like').trigger('click')
+    await flushPromises()
+    await wrapper.find('.action-like').trigger('click')
+    await flushPromises()
+
+    const like = wrapper.find('.action-like')
+    expect(like.text()).toContain('♥ 0')
+    expect(like.classes()).not.toContain('is-active')
+
+    const puts = putRequests()
+    expect(puts).toHaveLength(2)
+    expect(puts[1]?.url).toBe(`/api/posts/${post.id}/like`)
+    expect(puts[1]?.body).toEqual({ liked: false })
+  })
+
+  it('点击收藏发出 PUT 请求并更新计数与激活态', async () => {
+    const wrapper = mountApp()
+    await flushPromises()
+    const post = await seedOnePost(wrapper)
+
+    await wrapper.find('.action-favorite').trigger('click')
+    await flushPromises()
+
+    const favorite = wrapper.find('.action-favorite')
+    expect(favorite.text()).toContain('★ 1')
+    expect(favorite.classes()).toContain('is-active')
+    expect(favorite.attributes('aria-pressed')).toBe('true')
+    expect(favorite.attributes('aria-label')).toBe('取消收藏')
+
+    const puts = putRequests()
+    expect(puts).toHaveLength(1)
+    expect(puts[0]?.url).toBe(`/api/posts/${post.id}/favorite`)
+    expect(puts[0]?.body).toEqual({ favorited: true })
+    expect(fake.list()[0]?.favorited).toBe(true)
+  })
+
+  it('重新挂载后从后端恢复点赞与收藏状态', async () => {
+    const first = mountApp()
+    await flushPromises()
+    await seedOnePost(first)
+
+    await first.find('.action-like').trigger('click')
+    await flushPromises()
+    await first.find('.action-favorite').trigger('click')
+    await flushPromises()
+    first.unmount()
+
+    const second = mountApp()
+    await flushPromises()
+
+    expect(second.find('.action-like').classes()).toContain('is-active')
+    expect(second.find('.action-favorite').classes()).toContain('is-active')
+    expect(second.find('.action-like').text()).toContain('♥ 1')
+    expect(second.find('.action-favorite').text()).toContain('★ 1')
+  })
+
+  it('点赞失败时提示错误并回滚状态', async () => {
+    const wrapper = mountApp()
+    await flushPromises()
+    await seedOnePost(wrapper)
+
+    fake.failNext(500, 'internal', '服务器内部错误')
+
+    await wrapper.find('.action-like').trigger('click')
+    await flushPromises()
+
+    const like = wrapper.find('.action-like')
+    expect(like.text()).toContain('♥ 0')
+    expect(like.classes()).not.toContain('is-active')
+    expect(wrapper.find('.status').text()).toContain('点赞失败')
+    expect(wrapper.find('.status').classes()).toContain('is-error')
+    expect(fake.list()[0]?.liked).toBe(false)
+  })
+})

@@ -8,7 +8,12 @@ import type { FakeApi } from '../helpers/fake-api'
 
 let fake: FakeApi
 
-function buildPost(id: string, createdAt: number, text = `记录 ${id}`): Post {
+function buildPost(
+  id: string,
+  createdAt: number,
+  text = `记录 ${id}`,
+  overrides: Partial<Post> = {},
+): Post {
   return {
     id,
     text,
@@ -17,11 +22,16 @@ function buildPost(id: string, createdAt: number, text = `记录 ${id}`): Post {
     liked: false,
     favoriteCount: 0,
     favorited: false,
+    ...overrides,
   }
 }
 
 function postRequests() {
   return fake.requests().filter((request) => request.method === 'POST')
+}
+
+function putRequests() {
+  return fake.requests().filter((request) => request.method === 'PUT')
 }
 
 beforeEach(() => {
@@ -179,5 +189,192 @@ describe('hydrate', () => {
 
     expect(store.lastError).toBeTruthy()
     expect(store.posts).toEqual([])
+  })
+})
+
+describe('toggleLike', () => {
+  it('点赞：乐观更新计数并发起 PUT，请求体携带 liked:true', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    const pending = store.toggleLike('post-1')
+
+    expect(store.posts[0]?.liked).toBe(true)
+    expect(store.posts[0]?.likeCount).toBe(1)
+    expect(store.isReacting('post-1')).toBe(true)
+    expect(store.pendingReactionIds).toContain('post-1')
+
+    await expect(pending).resolves.toBe(true)
+
+    const puts = putRequests()
+    expect(puts).toHaveLength(1)
+    expect(puts[0]?.url).toBe('/api/posts/post-1/like')
+    expect(puts[0]?.body).toEqual({ liked: true })
+
+    expect(store.posts[0]?.liked).toBe(true)
+    expect(store.posts[0]?.likeCount).toBe(1)
+    expect(store.isReacting('post-1')).toBe(false)
+    expect(store.pendingReactionIds).toEqual([])
+    expect(store.lastError).toBeNull()
+  })
+
+  it('取消点赞：计数回落，请求体携带 liked:false', async () => {
+    fake.seed([buildPost('post-1', 100, '已点赞的记录', { likeCount: 3, liked: true })])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    const pending = store.toggleLike('post-1')
+
+    expect(store.posts[0]?.liked).toBe(false)
+    expect(store.posts[0]?.likeCount).toBe(2)
+
+    await expect(pending).resolves.toBe(true)
+
+    expect(putRequests()[0]?.body).toEqual({ liked: false })
+    expect(store.posts[0]?.likeCount).toBe(2)
+    expect(fake.list()[0]?.liked).toBe(false)
+  })
+
+  it('计数不会被扣成负数', async () => {
+    fake.seed([buildPost('post-1', 100, '计数异常的记录', { likeCount: 0, liked: true })])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    await store.toggleLike('post-1')
+
+    expect(store.posts[0]?.likeCount).toBe(0)
+    expect(store.posts[0]?.liked).toBe(false)
+  })
+
+  it('未知 id 不发请求并直接返回 false', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    await expect(store.toggleLike('missing')).resolves.toBe(false)
+
+    expect(putRequests()).toHaveLength(0)
+    expect(store.posts[0]?.liked).toBe(false)
+  })
+
+  it('在途期间同一 id 重复点击只发一次请求且返回 false', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    fake.hold()
+    const first = store.toggleLike('post-1')
+
+    await expect(store.toggleLike('post-1')).resolves.toBe(false)
+    expect(putRequests()).toHaveLength(1)
+    expect(store.posts[0]?.liked).toBe(true)
+
+    fake.release()
+    await expect(first).resolves.toBe(true)
+
+    expect(putRequests()).toHaveLength(1)
+    expect(store.posts[0]?.liked).toBe(true)
+    expect(store.isReacting('post-1')).toBe(false)
+  })
+
+  it('服务端失败时回滚状态并记录可读错误', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    fake.failNext(500, 'internal', '服务器内部错误')
+
+    await expect(store.toggleLike('post-1')).resolves.toBe(false)
+
+    expect(store.posts[0]?.liked).toBe(false)
+    expect(store.posts[0]?.likeCount).toBe(0)
+    expect(store.isReacting('post-1')).toBe(false)
+    expect(store.lastError).toContain('点赞失败')
+    expect(store.lastError).toContain('服务器内部错误')
+  })
+
+  it('网络异常时回滚状态并记录可读错误', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    fake.setMode('network-error')
+
+    await expect(store.toggleLike('post-1')).resolves.toBe(false)
+
+    expect(store.posts[0]?.liked).toBe(false)
+    expect(store.lastError).toContain('点赞失败')
+    expect(store.lastError).toContain('网络')
+  })
+
+  it('成功后列表顺序保持不变', async () => {
+    fake.seed([
+      buildPost('new', 300),
+      buildPost('middle', 200),
+      buildPost('old', 100),
+    ])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    await store.toggleLike('middle')
+    await store.toggleFavorite('old')
+
+    expect(store.posts.map((post) => post.id)).toEqual(['new', 'middle', 'old'])
+  })
+})
+
+describe('toggleFavorite', () => {
+  it('收藏与点赞互相独立', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    await store.toggleFavorite('post-1')
+
+    expect(store.posts[0]?.favorited).toBe(true)
+    expect(store.posts[0]?.favoriteCount).toBe(1)
+    expect(store.posts[0]?.liked).toBe(false)
+    expect(store.posts[0]?.likeCount).toBe(0)
+
+    await store.toggleLike('post-1')
+
+    expect(store.posts[0]?.liked).toBe(true)
+    expect(store.posts[0]?.favorited).toBe(true)
+
+    const puts = putRequests()
+    expect(puts).toHaveLength(2)
+    expect(puts[0]?.url).toBe('/api/posts/post-1/favorite')
+    expect(puts[0]?.body).toEqual({ favorited: true })
+    expect(puts[1]?.url).toBe('/api/posts/post-1/like')
+    expect(puts[1]?.body).toEqual({ liked: true })
+  })
+
+  it('取消收藏：计数回落且请求体为 favorited:false', async () => {
+    fake.seed([buildPost('post-1', 100, '已收藏的记录', { favoriteCount: 2, favorited: true })])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    await expect(store.toggleFavorite('post-1')).resolves.toBe(true)
+
+    expect(store.posts[0]?.favorited).toBe(false)
+    expect(store.posts[0]?.favoriteCount).toBe(1)
+    expect(putRequests()[0]?.body).toEqual({ favorited: false })
+  })
+
+  it('失败时回滚并记录「收藏失败」', async () => {
+    fake.seed([buildPost('post-1', 100)])
+    const store = usePostsStore()
+    await store.hydrate()
+
+    fake.failNext(404, 'not-found', '记录不存在')
+
+    await expect(store.toggleFavorite('post-1')).resolves.toBe(false)
+
+    expect(store.posts[0]?.favorited).toBe(false)
+    expect(store.posts[0]?.favoriteCount).toBe(0)
+    expect(store.isReacting('post-1')).toBe(false)
+    expect(store.lastError).toContain('收藏失败')
+    expect(store.lastError).toContain('记录不存在')
   })
 })

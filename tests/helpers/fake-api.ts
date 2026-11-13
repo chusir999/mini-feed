@@ -109,6 +109,64 @@ function parseBody(body: RequestInit['body']): unknown {
   }
 }
 
+type ReactionFlag = 'liked' | 'favorited'
+type ReactionCount = 'likeCount' | 'favoriteCount'
+
+interface ReactionRoute {
+  flag: ReactionFlag
+  count: ReactionCount
+  label: string
+}
+
+const REACTION_ROUTES: Record<string, ReactionRoute> = {
+  like: { flag: 'liked', count: 'likeCount', label: 'liked' },
+  favorite: { flag: 'favorited', count: 'favoriteCount', label: 'favorited' },
+}
+
+const REACTION_PATH = /^\/api\/posts\/([^/]+)\/(like|favorite)$/
+
+function decodeId(raw: string): string {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
+/** 幂等 set：仅当状态真正变化时才调整计数，且计数不低于 0 */
+function applyReaction(post: Post, route: ReactionRoute, next: boolean): Post {
+  if (post[route.flag] === next) return post
+
+  const count = Math.max(0, post[route.count] + (next ? 1 : -1))
+  post[route.flag] = next
+  post[route.count] = count
+
+  return post
+}
+
+function handleReaction(method: string, path: string, body: unknown): Response {
+  const matched = REACTION_PATH.exec(path)
+  if (!matched) return errorResponse(404, 'not-found', '接口不存在')
+
+  const id = decodeId(matched[1] ?? '')
+  const route = REACTION_ROUTES[matched[2] ?? '']
+  if (!route) return errorResponse(404, 'not-found', '接口不存在')
+
+  if (method !== 'PUT') {
+    return errorResponse(405, 'method-not-allowed', '不支持的请求方法')
+  }
+
+  if (!isRecord(body) || typeof body[route.flag] !== 'boolean') {
+    return errorResponse(400, 'invalid-body', `${route.label} 字段缺失或不是布尔值`)
+  }
+
+  const target = state.posts.find((post) => post.id === id)
+  if (!target) return errorResponse(404, 'not-found', '记录不存在')
+
+  const updated = applyReaction(target, route, body[route.flag] as boolean)
+  return jsonResponse(200, { post: updated })
+}
+
 async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = toUrl(input)
   const method = (init?.method ?? 'GET').toUpperCase()
@@ -141,6 +199,10 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
 
   const path = toPath(url)
+  if (REACTION_PATH.test(path)) {
+    return handleReaction(method, path, body)
+  }
+
   if (path !== '/api/posts' && path !== '/api/posts/') {
     return errorResponse(404, 'not-found', '接口不存在')
   }
