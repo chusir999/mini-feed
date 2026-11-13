@@ -8,7 +8,9 @@
 
 - **发布**：多行文本输入，280 字上限，实时字数统计（≥240 字转警示色），全空白内容不可提交，支持 `Ctrl / ⌘ + Enter` 快捷发布，发布中按钮禁用防重复提交
 - **时间线**：按创建时间倒序展示，最新在最前；每条含渐变首字头像、昵称、相对时间（刚刚 / n 分钟前 / n 小时前 / n 天前 / 日期）与正文
-- **服务端持久化**：内容保存在后端进程内存，刷新或重新打开页面内容与顺序不变，最多保留最新 500 条
+- **点赞 / 收藏**：每条记录底部可点赞（♥）与收藏（★），带计数与选中态；点击后本地乐观更新，失败自动回滚并提示；同一记录在途时按钮禁用，避免连点重复提交
+- **收藏筛选**：时间线可按「全部 / 已收藏」切换，已收藏为空时展示引导文案
+- **服务端持久化**：内容、点赞与收藏状态都保存在后端进程内存，刷新或重新打开页面后一致，最多保留最新 500 条
 - **安全渲染**：正文通过 Vue 插值渲染（不使用 `v-html`），HTML 标签与脚本以纯文本显示，换行保留
 - **容错**：后端未启动时页面不白屏，提示「加载失败，请确认后端服务已启动。」；发布失败保留草稿并提示后端返回的错误信息
 - **空状态 / 响应式 / 动效降级**：无内容时展示插画与引导文案；桌面 640px 居中单列，移动端自适应；遵循 `prefers-reduced-motion`
@@ -56,6 +58,10 @@ REST 风格，统一 JSON，错误体为 `{ "error": { "code", "message" } }`。
 | GET | `/api/health` | 健康检查 | `200 { "status": "ok" }` |
 | GET | `/api/posts` | 记录列表，`createdAt` 倒序 | `200 { "posts": Post[] }` |
 | POST | `/api/posts` | 创建记录，body `{ "text": string }` | `201 { "post": Post }` |
+| PUT | `/api/posts/:id/like` | 幂等设置点赞，body `{ "liked": boolean }` | `200 { "post": Post }` |
+| PUT | `/api/posts/:id/favorite` | 幂等设置收藏，body `{ "favorited": boolean }` | `200 { "post": Post }` |
+
+点赞 / 收藏为**幂等 set**语义（不是 toggle）：目标值与当前值相同则计数不变，`false → true` 计数 +1，`true → false` 计数 -1（下限 0），点赞与收藏互不影响。切换动作由前端根据当前状态取反后调用。
 
 错误码：
 
@@ -63,10 +69,10 @@ REST 风格，统一 JSON，错误体为 `{ "error": { "code", "message" } }`。
 | --- | --- | --- |
 | 400 | `empty` | 内容为空白 |
 | 400 | `too-long` | 超过 280 字符 |
-| 400 | `invalid-body` | 请求体非法 JSON / 缺少 `text` / `text` 非字符串 |
-| 404 | `not-found` | 未匹配的 `/api/*` 路由 |
+| 400 | `invalid-body` | 请求体非法 JSON / 缺少 `text` / `text` 非字符串；点赞收藏接口缺少布尔字段 |
+| 404 | `not-found` | 点赞 / 收藏的目标记录不存在；未匹配的 `/api/*` 路由 |
 
-`Post` 结构：`{ id: string; text: string; createdAt: number }`，`id` 由后端生成，`createdAt` 为毫秒时间戳。
+`Post` 结构：`{ id: string; text: string; createdAt: number; likeCount: number; liked: boolean; favoriteCount: number; favorited: boolean }`，`id` 由后端生成，`createdAt` 为毫秒时间戳，`liked` / `favorited` 为当前用户（单用户场景）的标记。
 
 ## 目录结构
 
@@ -90,8 +96,8 @@ REST 风格，统一 JSON，错误体为 `{ "error": { "code", "message" } }`。
 │   ├── components/
 │   │   ├── AppHeader.vue
 │   │   ├── PostComposer.vue
-│   │   ├── TimelineSection.vue
-│   │   ├── PostItem.vue
+│   │   ├── TimelineSection.vue   # 时间线 + 全部 / 已收藏筛选
+│   │   ├── PostItem.vue          # 单条记录 + 点赞 / 收藏操作条
 │   │   └── EmptyState.vue
 │   └── styles/main.css           # 设计令牌、布局、背景与全局样式
 └── tests/
@@ -106,29 +112,29 @@ REST 风格，统一 JSON，错误体为 `{ "error": { "code", "message" } }`。
 
 开发按「红 → 绿 → 重构」推进，测试先于实现提交：
 
-1. **后端**：`store`（倒序、时间戳并列时的稳定顺序、500 条上限丢弃最旧、可注入时钟与 id）与 `app`（health、列表、创建、trim、空/超长/非法 body 校验、404）
-2. **HTTP 层**：`api`（基址解析、非 2xx 错误体解析、网络异常、响应结构校验）
-3. **状态层**：`posts` store（本地校验不发请求、成功后插入最前、服务端错误与网络错误映射、hydrate 排序与安全回退、500 条截断、`isPublishing` 期间重复提交只发一次请求）
-4. **视图层**：Composer（字数、禁用态、快捷发布、busy 禁用、reset 回焦）、Timeline（空状态、倒序、纯文本渲染）、App（挂载即请求、发布 → 列表 → 请求体断言、重新挂载从后端恢复、后端不可用提示、不再写 Local Storage 的回归断言）
+1. **后端**：`store`（倒序、时间戳并列时的稳定顺序、500 条上限丢弃最旧、可注入时钟与 id、点赞 / 收藏幂等 set 与计数下限）与 `app`（health、列表、创建、trim、空/超长/非法 body 校验、点赞与收藏的成功 / 400 / 404、404）
+2. **HTTP 层**：`api`（基址解析、非 2xx 错误体解析、网络异常、响应结构校验、点赞收藏字段与计数校验）
+3. **状态层**：`posts` store（本地校验不发请求、成功后插入最前、服务端错误与网络错误映射、hydrate 排序与安全回退、500 条截断、`isPublishing` 期间重复提交只发一次请求、点赞收藏乐观更新 / 失败回滚 / 在途去重）
+4. **视图层**：Composer（字数、禁用态、快捷发布、busy 禁用、reset 回焦）、Timeline（空状态、倒序、纯文本渲染、操作按钮与 `aria-pressed`、busy 禁用、已收藏筛选）、App（挂载即请求、发布 → 列表 → 请求体断言、重新挂载从后端恢复、后端不可用提示、不再写 Local Storage 的回归断言、点赞发出 PUT 并同步 UI）
 
-当前用例：6 个测试文件、57 个用例，全部通过。
+当前用例：6 个测试文件、106 个用例，全部通过。
 
 ## 数据存储
 
 - 位置：后端进程内存（`server/store.ts` 中的数组），进程退出即丢失
-- 结构：`{ id: string, text: string, createdAt: number }[]`，接口返回按 `createdAt` 倒序
+- 结构：`{ id: string, text: string, createdAt: number, likeCount: number, liked: boolean, favoriteCount: number, favorited: boolean }[]`，接口返回按 `createdAt` 倒序
 - 上限：最多 500 条，超出丢弃最早写入的一条
 - 清除：重启后端服务（`Ctrl + C` 后重新 `npm run dev:server`）
 - 注意：不是数据库，不支持多实例共享；如需持久化需替换 `server/store.ts` 的实现
 
 ## 验收记录
 
-- `npm run test:run`：6 个文件 / 57 个用例全部通过
+- `npm run test:run`：6 个文件 / 106 个用例全部通过
 - `npm run typecheck`：无类型错误
 - `npm run build`：构建成功
-- 接口冒烟：`GET /api/health` 返回 ok；`POST /api/posts` 201；空内容返回 `400 empty`
-- 浏览器端（Chromium + `vite` 开发服务器，`/api` 代理到 3001）：发布成功、刷新后数据仍在、`localStorage` 保持为空、后端不可用时展示错误提示
+- 接口冒烟：`GET /api/health` 返回 ok；`POST /api/posts` 201；空内容返回 `400 empty`；`PUT /api/posts/:id/like` 连续两次 `{ "liked": true }` 计数只 +1（幂等）；不存在的 id 返回 `404 not-found`；`{ "favorited": "yes" }` 返回 `400 invalid-body`
+- 浏览器端（Chromium + `vite` 开发服务器，`/api` 代理到 3001）：发布成功、点赞 / 收藏切换并即时更新计数与选中态、刷新后点赞收藏状态由后端恢复、「已收藏」筛选只显示收藏项、在筛选下取消收藏即时移出列表、`localStorage` 保持为空、后端不可用时展示错误提示
 
 ## 版本
 
-v3.0.0
+v3.1.0

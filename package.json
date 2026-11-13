@@ -1,6 +1,6 @@
 {
   "name": "minifeed",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
   "type": "module",
   "description": "微记 MiniFeed —— Vue 3 + Pinia 的本地短动态记录工具",

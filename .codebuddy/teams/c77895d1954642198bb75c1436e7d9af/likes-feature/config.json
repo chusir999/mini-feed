@@ -1,0 +1,25 @@
+{
+  "name": "likes-feature",
+  "mainConversationId": "c77895d1954642198bb75c1436e7d9af",
+  "workspacePath": "d:/04IT/02培训/省公司培训202611/homework",
+  "createdAt": "2026-11-13T07:15:34.117Z",
+  "options": {
+    "workspacePath": "d:/04IT/02培训/省公司培训202611/homework"
+  },
+  "members": [
+    {
+      "memberId": "api-dev@likes-feature",
+      "name": "api-dev",
+      "role": "后端点赞收藏接口 TDD",
+      "sessionId": "75cf53224f5a406ba8b275ad868bb766",
+      "status": "running"
+    },
+    {
+      "memberId": "ui-dev@likes-feature",
+      "name": "ui-dev",
+      "role": "前端点赞收藏交互 TDD",
+      "sessionId": "0b48c315841c419ab61e7eed9dbc20b1",
+      "status": "running"
+    }
+  ]
+}
