@@ -9,7 +9,7 @@ import { usePostsStore } from '@/stores/posts'
 import type { StatusMessage } from '@/types'
 
 const store = usePostsStore()
-const { posts } = storeToRefs(store)
+const { posts, pendingReactionIds } = storeToRefs(store)
 
 const composer = ref<InstanceType<typeof PostComposer> | null>(null)
 const status = ref<StatusMessage | null>(null)
@@ -46,6 +46,20 @@ async function handleSubmit(text: string): Promise<void> {
   setStatus('error', store.lastError ?? '发布失败，请稍后再试。')
 }
 
+async function handleToggleLike(id: string): Promise<void> {
+  const ignored = store.isReacting(id)
+  const ok = await store.toggleLike(id)
+
+  if (!ok && !ignored && store.lastError) setStatus('error', store.lastError)
+}
+
+async function handleToggleFavorite(id: string): Promise<void> {
+  const ignored = store.isReacting(id)
+  const ok = await store.toggleFavorite(id)
+
+  if (!ok && !ignored && store.lastError) setStatus('error', store.lastError)
+}
+
 onMounted(async () => {
   await store.hydrate()
 
@@ -75,12 +89,17 @@ onBeforeUnmount(() => {
         :busy="store.isPublishing"
         @submit="handleSubmit"
       />
-      <TimelineSection :posts="posts" />
+      <TimelineSection
+        :posts="posts"
+        :pending-ids="pendingReactionIds"
+        @toggle-like="handleToggleLike"
+        @toggle-favorite="handleToggleFavorite"
+      />
     </main>
 
     <footer class="footer">
       <p>内容保存在本地服务的进程内存中，服务重启后会清空。</p>
-      <p class="version">微记 MiniFeed · v3.0.0</p>
+      <p class="version">微记 MiniFeed · v3.1.0</p>
     </footer>
   </div>
 </template>
