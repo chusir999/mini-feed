@@ -8,6 +8,10 @@ function buildPost(overrides: Partial<Post> = {}): Post {
     id: overrides.id ?? 'post-1',
     text: overrides.text ?? '一条记录',
     createdAt: overrides.createdAt ?? Date.now(),
+    likeCount: overrides.likeCount ?? 0,
+    liked: overrides.liked ?? false,
+    favoriteCount: overrides.favoriteCount ?? 0,
+    favorited: overrides.favorited ?? false,
   }
 }
 

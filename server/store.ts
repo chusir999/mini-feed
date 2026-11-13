@@ -37,6 +37,10 @@ export function createPostStore(options: PostStoreOptions = {}): PostStore {
     id: post.id,
     text: post.text,
     createdAt: post.createdAt,
+    likeCount: post.likeCount,
+    liked: post.liked,
+    favoriteCount: post.favoriteCount,
+    favorited: post.favorited,
   })
 
   return {
@@ -51,7 +55,16 @@ export function createPostStore(options: PostStoreOptions = {}): PostStore {
     },
 
     add(text: string): Post {
-      const post: StoredPost = { id: generateId(), text, createdAt: now(), seq: nextSeq }
+      const post: StoredPost = {
+        id: generateId(),
+        text,
+        createdAt: now(),
+        likeCount: 0,
+        liked: false,
+        favoriteCount: 0,
+        favorited: false,
+        seq: nextSeq,
+      }
       nextSeq += 1
       posts.push(post)
       if (posts.length > MAX_POSTS) {

@@ -162,7 +162,15 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return errorResponse(400, 'too-long', `内容不能超过 ${MAX_LENGTH} 个字符`)
     }
 
-    const post: Post = { id: nextPostId(), text, createdAt: nextCreatedAt() }
+    const post: Post = {
+      id: nextPostId(),
+      text,
+      createdAt: nextCreatedAt(),
+      likeCount: 0,
+      liked: false,
+      favoriteCount: 0,
+      favorited: false,
+    }
     state.posts.push(post)
 
     if (state.posts.length > MAX_POSTS) {

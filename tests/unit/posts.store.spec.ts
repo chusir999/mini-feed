@@ -9,7 +9,15 @@ import type { FakeApi } from '../helpers/fake-api'
 let fake: FakeApi
 
 function buildPost(id: string, createdAt: number, text = `记录 ${id}`): Post {
-  return { id, text, createdAt }
+  return {
+    id,
+    text,
+    createdAt,
+    likeCount: 0,
+    liked: false,
+    favoriteCount: 0,
+    favorited: false,
+  }
 }
 
 function postRequests() {
